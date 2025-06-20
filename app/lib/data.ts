@@ -1,4 +1,5 @@
-import postgres from 'postgres';
+import { PrismaClient, Prisma } from '@prisma/client';
+import { connection } from 'next/server';
 import {
   CustomerField,
   CustomersTableType,
@@ -9,19 +10,21 @@ import {
 } from './definitions';
 import { formatCurrency } from './utils';
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const prisma = new PrismaClient();
 
 export async function fetchRevenue() {
+  await connection();
+  
   try {
     // Artificially delay a response for demo purposes.
     // Don't do this in production :)
 
-    // console.log('Fetching revenue data...');
-    // await new Promise((resolve) => setTimeout(resolve, 3000));
+    console.log('Fetching revenue data...');
+    await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    const data = await sql<Revenue[]>`SELECT * FROM revenue`;
+    const data = await prisma.$queryRaw<Revenue[]>`SELECT * FROM "Revenue"`;
 
-    // console.log('Data fetch completed after 3 seconds.');
+    console.log('Data fetch completed after 3 seconds.');
 
     return data;
   } catch (error) {
@@ -31,11 +34,13 @@ export async function fetchRevenue() {
 }
 
 export async function fetchLatestInvoices() {
+  await connection();
+  
   try {
-    const data = await sql<LatestInvoiceRaw[]>`
+    const data = await prisma.$queryRaw<LatestInvoiceRaw[]>`
       SELECT invoices.amount, customers.name, customers.image_url, customers.email, invoices.id
-      FROM invoices
-      JOIN customers ON invoices.customer_id = customers.id
+      FROM "Invoice" as invoices
+      JOIN "Customer" as customers ON invoices.customer_id = customers.id
       ORDER BY invoices.date DESC
       LIMIT 5`;
 
@@ -51,16 +56,18 @@ export async function fetchLatestInvoices() {
 }
 
 export async function fetchCardData() {
+  await connection();
+  
   try {
     // You can probably combine these into a single SQL query
     // However, we are intentionally splitting them to demonstrate
     // how to initialize multiple queries in parallel with JS.
-    const invoiceCountPromise = sql`SELECT COUNT(*) FROM invoices`;
-    const customerCountPromise = sql`SELECT COUNT(*) FROM customers`;
-    const invoiceStatusPromise = sql`SELECT
+    const invoiceCountPromise = prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*) FROM "Invoice"`;
+    const customerCountPromise = prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*) FROM "Customer"`;
+    const invoiceStatusPromise = prisma.$queryRaw<Array<{ paid: number; pending: number }>>`SELECT
          SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) AS "paid",
          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) AS "pending"
-         FROM invoices`;
+         FROM "Invoice"`;
 
     const data = await Promise.all([
       invoiceCountPromise,
@@ -90,10 +97,12 @@ export async function fetchFilteredInvoices(
   query: string,
   currentPage: number,
 ) {
+  await connection();
+  
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
   try {
-    const invoices = await sql<InvoicesTable[]>`
+    const invoices = await prisma.$queryRaw<InvoicesTable[]>`
       SELECT
         invoices.id,
         invoices.amount,
@@ -102,8 +111,8 @@ export async function fetchFilteredInvoices(
         customers.name,
         customers.email,
         customers.image_url
-      FROM invoices
-      JOIN customers ON invoices.customer_id = customers.id
+      FROM "Invoice" as invoices
+      JOIN "Customer" as customers ON invoices.customer_id = customers.id
       WHERE
         customers.name ILIKE ${`%${query}%`} OR
         customers.email ILIKE ${`%${query}%`} OR
@@ -111,7 +120,7 @@ export async function fetchFilteredInvoices(
         invoices.date::text ILIKE ${`%${query}%`} OR
         invoices.status ILIKE ${`%${query}%`}
       ORDER BY invoices.date DESC
-      LIMIT ${ITEMS_PER_PAGE} OFFSET ${offset}
+      LIMIT ${Prisma.raw(ITEMS_PER_PAGE.toString())} OFFSET ${Prisma.raw(offset.toString())}
     `;
 
     return invoices;
@@ -122,10 +131,12 @@ export async function fetchFilteredInvoices(
 }
 
 export async function fetchInvoicesPages(query: string) {
+  await connection();
+  
   try {
-    const data = await sql`SELECT COUNT(*)
-    FROM invoices
-    JOIN customers ON invoices.customer_id = customers.id
+    const data = await prisma.$queryRaw<Array<{ count: bigint }>>`SELECT COUNT(*)
+    FROM "Invoice" as invoices
+    JOIN "Customer" as customers ON invoices.customer_id = customers.id
     WHERE
       customers.name ILIKE ${`%${query}%`} OR
       customers.email ILIKE ${`%${query}%`} OR
@@ -143,14 +154,16 @@ export async function fetchInvoicesPages(query: string) {
 }
 
 export async function fetchInvoiceById(id: string) {
+  await connection();
+  
   try {
-    const data = await sql<InvoiceForm[]>`
+    const data = await prisma.$queryRaw<InvoiceForm[]>`
       SELECT
         invoices.id,
         invoices.customer_id,
         invoices.amount,
         invoices.status
-      FROM invoices
+      FROM "Invoice" as invoices
       WHERE invoices.id = ${id};
     `;
 
@@ -168,12 +181,14 @@ export async function fetchInvoiceById(id: string) {
 }
 
 export async function fetchCustomers() {
+  await connection();
+  
   try {
-    const customers = await sql<CustomerField[]>`
+    const customers = await prisma.$queryRaw<CustomerField[]>`
       SELECT
         id,
         name
-      FROM customers
+      FROM "Customer"
       ORDER BY name ASC
     `;
 
@@ -185,8 +200,10 @@ export async function fetchCustomers() {
 }
 
 export async function fetchFilteredCustomers(query: string) {
+  await connection();
+  
   try {
-    const data = await sql<CustomersTableType[]>`
+    const data = await prisma.$queryRaw<CustomersTableType[]>`
 		SELECT
 		  customers.id,
 		  customers.name,
@@ -195,8 +212,8 @@ export async function fetchFilteredCustomers(query: string) {
 		  COUNT(invoices.id) AS total_invoices,
 		  SUM(CASE WHEN invoices.status = 'pending' THEN invoices.amount ELSE 0 END) AS total_pending,
 		  SUM(CASE WHEN invoices.status = 'paid' THEN invoices.amount ELSE 0 END) AS total_paid
-		FROM customers
-		LEFT JOIN invoices ON customers.id = invoices.customer_id
+		FROM "Customer" as customers
+		LEFT JOIN "Invoice" as invoices ON customers.id = invoices.customer_id
 		WHERE
 		  customers.name ILIKE ${`%${query}%`} OR
         customers.email ILIKE ${`%${query}%`}
@@ -215,4 +232,9 @@ export async function fetchFilteredCustomers(query: string) {
     console.error('Database Error:', err);
     throw new Error('Failed to fetch customer table.');
   }
+}
+
+// 在应用程序关闭时清理 Prisma 连接
+export async function disconnect() {
+  await prisma.$disconnect();
 }

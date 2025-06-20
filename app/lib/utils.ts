@@ -1,7 +1,8 @@
 import { Revenue } from './definitions';
 
-export const formatCurrency = (amount: number) => {
-  return (amount / 100).toLocaleString('en-US', {
+export const formatCurrency = (amount: number | bigint) => {
+  const numAmount = typeof amount === 'bigint' ? Number(amount) : amount;
+  return (numAmount / 100).toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD',
   });
